@@ -58,23 +58,36 @@ const room={{ room|tojson }}, sock=io();
 const vid=document.getElementById('v'), stage=document.getElementById('stage'), msg=document.getElementById('msg');
 const empty=document.getElementById('empty');
 let kind=null, curId=null, need=null, yt=null, ytReady=false, pending=null, mute=0, lastT=0;
-const quiet=()=>{mute=Date.now()+900}, muted=()=>Date.now()<mute;
+const quiet=()=>{mute=Date.now()+600}, muted=()=>Date.now()<mute;
+/* server clock offset (for latency compensation) */
+let off=0, best=1e9;
+const srvNow=()=>(Date.now()+off)/1000;
+function clockSample(){
+  const c0=Date.now();
+  sock.emit('time',s=>{
+    const c1=Date.now(), rtt=c1-c0;
+    if(rtt<=best+20){best=Math.min(best,rtt);off=s*1000+rtt/2-c1;}
+  });
+}
+sock.on('connect',()=>{for(let i=0;i<6;i++)setTimeout(clockSample,i*250);});
+setInterval(clockSample,20000);
 const mb=n=>(n/1048576).toFixed(1)+' MB';
 
 /* ---------- player ---------- */
 const ready=()=>kind==='yt'?ytReady:(kind==='local'&&vid.readyState>0);
 const cur=()=>kind==='yt'?yt.getCurrentTime():vid.currentTime;
 const playing=()=>kind==='yt'?yt.getPlayerState()===1:!vid.paused;
-function send(){ if(!ready()||muted())return; sock.emit('ctl',{playing:playing(),t:cur()}); }
+function send(){ if(!ready()||muted())return; sock.emit('ctl',{playing:playing(),t:cur(),at:srvNow()}); }
 
-function apply(p,t){
-  if(!ready()){pending={p,t};return;}
+function apply(p,t,at){
+  if(!ready()){pending={p,t,at};return;}
+  if(p&&at)t+=Math.max(0,Math.min(60,srvNow()-at));   // compensate latency
   quiet();
-  if(Math.abs(cur()-t)>0.7){kind==='yt'?yt.seekTo(t,true):vid.currentTime=t;}
+  if(Math.abs(cur()-t)>0.4){kind==='yt'?yt.seekTo(t,true):vid.currentTime=t;}
   if(kind==='yt'){p?yt.playVideo():yt.pauseVideo();}
   else{p?vid.play().catch(()=>{}):vid.pause();}
 }
-function flush(){if(pending&&ready()){const x=pending;pending=null;apply(x.p,x.t);}}
+function flush(){if(pending&&ready()){const x=pending;pending=null;apply(x.p,x.t,x.at);}}
 
 function show(k){
   kind=k;
@@ -124,22 +137,24 @@ document.getElementById('file').onchange=e=>{
 vid.addEventListener('loadedmetadata',flush);
 ['play','pause','seeked'].forEach(ev=>vid.addEventListener(ev,send));
 
+let lastW=performance.now();
 setInterval(()=>{  // detect YouTube seeks
+  const w=performance.now(), dt=(w-lastW)/1000; lastW=w;
   if(kind!=='yt'||!ytReady)return;
   const t=cur();
-  if(!muted()&&Math.abs(t-lastT-(playing()?0.5:0))>1.5)send();
+  if(!muted()&&Math.abs(t-lastT-(playing()?dt:0))>1)send();
   lastT=t;
-},500);
+},250);
 
 /* ---------- server events ---------- */
 sock.on('load',d=>{
   pending=null;
   d.kind==='yt'?openYT(d.id):needFile(d);
 });
-sock.on('ctl',d=>apply(d.playing,d.t));
+sock.on('ctl',d=>apply(d.playing,d.t,d.at));
 sock.on('state',d=>{
-  if(d.kind===kind&&d.id===curId){apply(d.playing,d.t);return;}
-  pending={p:d.playing,t:d.t};
+  if(d.kind===kind&&d.id===curId){apply(d.playing,d.t,d.at);return;}
+  pending={p:d.playing,t:d.t,at:d.at};
   d.kind==='yt'?openYT(d.id):needFile(d);
 });
 sock.on('count',n=>{document.getElementById('count').textContent=n+' watching';});

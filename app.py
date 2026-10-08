@@ -18,7 +18,11 @@ def room_page(room):
 def snap(r):
     s = rooms[r]
     t = s["t"] + (time.time() - s["at"] if s["playing"] else 0)
-    return {"kind": s["kind"], "id": s["id"], "size": s["size"], "playing": s["playing"], "t": t}
+    return {"kind": s["kind"], "id": s["id"], "size": s["size"], "playing": s["playing"], "t": t, "at": time.time()}
+
+@sio.on("time")
+def clock():
+    return time.time()
 
 @sio.on("join")
 def join(d):
@@ -55,8 +59,11 @@ def ctl(d):
     r = where.get(request.sid)
     if not r or not rooms[r]["kind"]:
         return
-    rooms[r].update(playing=d["playing"], t=d["t"], at=time.time())
-    emit("ctl", {"playing": d["playing"], "t": d["t"]}, to=r, include_self=False)
+    at = d.get("at")
+    if not isinstance(at, (int, float)) or abs(at - time.time()) > 5:
+        at = time.time()
+    rooms[r].update(playing=d["playing"], t=d["t"], at=at)
+    emit("ctl", {"playing": d["playing"], "t": d["t"], "at": at}, to=r, include_self=False)
 
 @sio.on("disconnect")
 def bye(*a):
