@@ -185,7 +185,7 @@
 
     <div class="wrap">
         <header>
-            <h1>Watch Party<span>{{ room }}</span></h1>
+            <h1>Watch Room<span>{{ room }}</span></h1>
             <div class="right"><span id="count"></span><button onclick="copyLink(this)">Copy link</button></div>
         </header>
 
@@ -198,8 +198,8 @@
         <div class="bar">
             <input type="text" id="url" placeholder="YouTube link">
             <button onclick="loadYT()">Load</button>
-            <label class="btn" for="file">Local file</label>
-            <input type="file" id="file" accept="video/*">
+            <label class="btn" for="file" hidden>Local file</label>
+            <input type="file" id="file" accept="video/*" hidden>
             <button onclick="sock.emit('resync')">Sync</button>
         </div>
         <div id="msg"></div>
@@ -265,7 +265,7 @@
             if (!document.getElementById('yt')) { const d = document.createElement('div'); d.id = 'yt'; stage.insertBefore(d, vid); }
             show('yt');
             yt = new YT.Player('yt', {
-                videoId: id, width: '100%', height: '100%', playerVars: { playsinline: 1 }, events: {
+                host: 'https://www.youtube-nocookie.com', videoId: id, width: '100%', height: '100%', playerVars: { playsinline: 1 }, events: {
                     onReady: () => { ytReady = true; flush(); },
                     onStateChange: e => { if (e.data === 1 || e.data === 2) send(); }
                 }
