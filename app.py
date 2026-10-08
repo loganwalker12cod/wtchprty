@@ -1,39 +1,72 @@
 import time, secrets
-from flask import Flask, render_template, redirect
+from flask import Flask, render_template, redirect, request
 from flask_socketio import SocketIO, join_room, emit
 
 app = Flask(__name__)
 sio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
-rooms = {}
+rooms = {}  # room -> {members:set, kind, id, size, playing, t, at}
+where = {}  # sid -> room
 
 @app.route("/")
 def home():
     return redirect(f"/r/{secrets.token_urlsafe(4)}")
 
 @app.route("/r/<room>")
-def room(room):
+def room_page(room):
     return render_template("room.html", room=room)
+
+def snap(r):
+    s = rooms[r]
+    t = s["t"] + (time.time() - s["at"] if s["playing"] else 0)
+    return {"kind": s["kind"], "id": s["id"], "size": s["size"], "playing": s["playing"], "t": t}
 
 @sio.on("join")
 def join(d):
-    join_room(d["room"])
-    s = rooms.get(d["room"])
-    if s:
-        t = s["t"] + (time.time() - s["at"] if s["playing"] else 0)
-        emit("state", {**s, "t": t})
+    r, sid = d["room"], request.sid
+    if sid in where:
+        return
+    s = rooms.setdefault(r, {"members": set(), "kind": None, "id": None, "size": 0,
+                             "playing": False, "t": 0, "at": time.time()})
+    s["members"].add(sid)
+    where[sid] = r
+    join_room(r)
+    sio.emit("count", len(s["members"]), to=r)
+    if s["kind"]:
+        emit("state", snap(r))
+
+@sio.on("resync")
+def resync():
+    r = where.get(request.sid)
+    if r and rooms[r]["kind"]:
+        emit("state", snap(r))
 
 @sio.on("load")
 def load(d):
-    rooms[d["room"]] = {"kind": d["kind"], "id": d["id"], "playing": False, "t": 0, "at": time.time()}
-    emit("load", d, to=d["room"], include_self=False)
+    r = where.get(request.sid)
+    if not r:
+        return
+    rooms[r].update(kind=d["kind"], id=d["id"], size=d.get("size", 0),
+                    playing=False, t=0, at=time.time())
+    emit("load", {"kind": d["kind"], "id": d["id"], "size": d.get("size", 0)},
+         to=r, include_self=False)
 
 @sio.on("ctl")
 def ctl(d):
-    s = rooms.get(d["room"])
-    if not s:
+    r = where.get(request.sid)
+    if not r or not rooms[r]["kind"]:
         return
-    s.update(playing=d["playing"], t=d["t"], at=time.time())
-    emit("ctl", d, to=d["room"], include_self=False)
+    rooms[r].update(playing=d["playing"], t=d["t"], at=time.time())
+    emit("ctl", {"playing": d["playing"], "t": d["t"]}, to=r, include_self=False)
+
+@sio.on("disconnect")
+def bye(*a):
+    r = where.pop(request.sid, None)
+    if r and r in rooms:
+        rooms[r]["members"].discard(request.sid)
+        if rooms[r]["members"]:
+            sio.emit("count", len(rooms[r]["members"]), to=r)
+        else:
+            del rooms[r]
 
 if __name__ == "__main__":
     sio.run(app, port=5000, debug=True)
