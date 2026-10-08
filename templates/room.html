@@ -1,166 +1,353 @@
 <!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Room {{ room }}</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0d0d0d;color:#d8d8d8;font:15px/1.4 system-ui,sans-serif}
-.wrap{max-width:960px;margin:0 auto;padding:16px}
-header{display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;border-bottom:1px solid #222;margin-bottom:16px;gap:12px}
-header h1{font-size:16px;font-weight:600}
-header h1 span{color:#777;margin-left:8px;font-weight:400}
-.right{display:flex;align-items:center;gap:12px;color:#777}
-.stage{background:#000;aspect-ratio:16/9;width:100%;border:1px solid #222}
-.stage>*{width:100%;height:100%;display:none;border:0}
-.stage>.empty{display:flex;align-items:center;justify-content:center;color:#555}
-.bar{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-input[type=text]{flex:1;min-width:200px;background:#161616;border:1px solid #2a2a2a;color:#d8d8d8;padding:9px 10px;font:inherit;outline:none}
-input[type=text]:focus{border-color:#555}
-button,.btn{background:#1e1e1e;border:1px solid #2a2a2a;color:#d8d8d8;padding:9px 14px;font:inherit;cursor:pointer}
-button:hover,.btn:hover{background:#262626}
-input[type=file]{display:none}
-#msg{color:#c9a227;margin-top:12px;min-height:20px}
-.overlay{position:fixed;inset:0;background:#0d0d0d;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;z-index:9}
-.overlay p{color:#777}
-</style></head><body>
+<html lang="en">
 
-<div class="overlay" id="enter">
-  <p>Room {{ room }}</p>
-  <button onclick="enter()">Enter</button>
-</div>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Room {{ room }}</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
 
-<div class="wrap">
-  <header>
-    <h1>Watch Party<span>{{ room }}</span></h1>
-    <div class="right"><span id="count"></span><button onclick="copyLink(this)">Copy link</button></div>
-  </header>
+        body {
+            background: #0d0d0d;
+            color: #d8d8d8;
+            font: 15px/1.4 system-ui, sans-serif
+        }
 
-  <div class="stage" id="stage">
-    <div class="empty" id="empty">Nothing loaded</div>
-    <div id="yt"></div>
-    <video id="v" controls playsinline></video>
-  </div>
+        .wrap {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 16px
+        }
 
-  <div class="bar">
-    <input type="text" id="url" placeholder="YouTube link">
-    <button onclick="loadYT()">Load</button>
-    <label class="btn" for="file">Local file</label>
-    <input type="file" id="file" accept="video/*">
-    <button onclick="sock.emit('resync')">Sync</button>
-  </div>
-  <div id="msg"></div>
-</div>
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #222;
+            margin-bottom: 16px;
+            gap: 12px
+        }
 
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="https://www.youtube.com/iframe_api"></script>
-<script>
-const room={{ room|tojson }}, sock=io();
-const vid=document.getElementById('v'), stage=document.getElementById('stage'), msg=document.getElementById('msg');
-const empty=document.getElementById('empty');
-let kind=null, curId=null, need=null, yt=null, ytReady=false, pending=null, mute=0, lastT=0;
-const quiet=()=>{mute=Date.now()+600}, muted=()=>Date.now()<mute;
-/* server clock offset (for latency compensation) */
-let off=0, best=1e9;
-const srvNow=()=>(Date.now()+off)/1000;
-function clockSample(){
-  const c0=Date.now();
-  sock.emit('time',s=>{
-    const c1=Date.now(), rtt=c1-c0;
-    if(rtt<=best+20){best=Math.min(best,rtt);off=s*1000+rtt/2-c1;}
-  });
-}
-sock.on('connect',()=>{for(let i=0;i<6;i++)setTimeout(clockSample,i*250);});
-setInterval(clockSample,20000);
-const mb=n=>(n/1048576).toFixed(1)+' MB';
+        header h1 {
+            font-size: 16px;
+            font-weight: 600
+        }
 
-/* ---------- player ---------- */
-const ready=()=>kind==='yt'?ytReady:(kind==='local'&&vid.readyState>0);
-const cur=()=>kind==='yt'?yt.getCurrentTime():vid.currentTime;
-const playing=()=>kind==='yt'?yt.getPlayerState()===1:!vid.paused;
-function send(){ if(!ready()||muted())return; sock.emit('ctl',{playing:playing(),t:cur(),at:srvNow()}); }
+        header h1 span {
+            color: #777;
+            margin-left: 8px;
+            font-weight: 400
+        }
 
-function apply(p,t,at){
-  if(!ready()){pending={p,t,at};return;}
-  if(p&&at)t+=Math.max(0,Math.min(60,srvNow()-at));   // compensate latency
-  quiet();
-  if(Math.abs(cur()-t)>0.4){kind==='yt'?yt.seekTo(t,true):vid.currentTime=t;}
-  if(kind==='yt'){p?yt.playVideo():yt.pauseVideo();}
-  else{p?vid.play().catch(()=>{}):vid.pause();}
-}
-function flush(){if(pending&&ready()){const x=pending;pending=null;apply(x.p,x.t,x.at);}}
+        .right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #777
+        }
 
-function show(k){
-  kind=k;
-  empty.style.display=k?'none':'flex';
-  const y=document.getElementById('yt');
-  if(y)y.style.display=k==='yt'?'block':'none';
-  vid.style.display=k==='local'?'block':'none';
-  if(k!=='yt'&&yt&&ytReady){try{yt.pauseVideo()}catch(e){}}
-  if(k!=='local')vid.pause();
-}
-function openYT(id){
-  if(!window.YT||!YT.Player){setTimeout(()=>openYT(id),300);return;}
-  need=null; curId=id; ytReady=false; msg.textContent='';
-  if(yt){try{yt.destroy()}catch(e){} yt=null;}
-  if(!document.getElementById('yt')){const d=document.createElement('div');d.id='yt';stage.insertBefore(d,vid);}
-  show('yt');
-  yt=new YT.Player('yt',{videoId:id,width:'100%',height:'100%',playerVars:{playsinline:1},events:{
-    onReady:()=>{ytReady=true;flush();},
-    onStateChange:e=>{if(e.data===1||e.data===2)send();}
-  }});
-}
-function openLocal(file){
-  need=null; curId=file.name; msg.textContent='';
-  vid.src=URL.createObjectURL(file); show('local');
-}
-function needFile(d){
-  need={name:d.id,size:d.size}; curId=d.id;
-  vid.removeAttribute('src'); show(null);
-  msg.textContent='Local file in use: '+d.id+' ('+mb(d.size)+'). Pick the same file.';
-}
+        .stage {
+            background: #000;
+            aspect-ratio: 16/9;
+            width: 100%;
+            border: 1px solid #222
+        }
 
-/* ---------- user actions ---------- */
-function loadYT(){
-  const m=document.getElementById('url').value.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);
-  if(!m){msg.textContent='Invalid YouTube link';return;}
-  pending=null; openYT(m[1]); sock.emit('load',{kind:'yt',id:m[1]});
-}
-document.getElementById('file').onchange=e=>{
-  const f=e.target.files[0]; e.target.value=''; if(!f)return;
-  if(need){
-    if(f.size===need.size){openLocal(f);return;}               // follower, matching file
-    if(!confirm('Different file ('+mb(f.size)+'). Load it for everyone?'))return;
-  }
-  pending=null; openLocal(f);
-  sock.emit('load',{kind:'local',id:f.name,size:f.size});
-};
-vid.addEventListener('loadedmetadata',flush);
-['play','pause','seeked'].forEach(ev=>vid.addEventListener(ev,send));
+        .stage>* {
+            width: 100%;
+            height: 100%;
+            display: none;
+            border: 0
+        }
 
-let lastW=performance.now();
-setInterval(()=>{  // detect YouTube seeks
-  const w=performance.now(), dt=(w-lastW)/1000; lastW=w;
-  if(kind!=='yt'||!ytReady)return;
-  const t=cur();
-  if(!muted()&&Math.abs(t-lastT-(playing()?dt:0))>1)send();
-  lastT=t;
-},250);
+        .stage>.empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555
+        }
 
-/* ---------- server events ---------- */
-sock.on('load',d=>{
-  pending=null;
-  d.kind==='yt'?openYT(d.id):needFile(d);
-});
-sock.on('ctl',d=>apply(d.playing,d.t,d.at));
-sock.on('state',d=>{
-  if(d.kind===kind&&d.id===curId){apply(d.playing,d.t,d.at);return;}
-  pending={p:d.playing,t:d.t,at:d.at};
-  d.kind==='yt'?openYT(d.id):needFile(d);
-});
-sock.on('count',n=>{document.getElementById('count').textContent=n+' watching';});
+        .bar {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            flex-wrap: wrap
+        }
 
-/* ---------- ui ---------- */
-function enter(){document.getElementById('enter').remove();sock.emit('join',{room});}
-function copyLink(b){navigator.clipboard.writeText(location.href);b.textContent='Copied';setTimeout(()=>b.textContent='Copy link',1200);}
-</script>
-</body></html>
+        input[type=text] {
+            flex: 1;
+            min-width: 200px;
+            background: #161616;
+            border: 1px solid #2a2a2a;
+            color: #d8d8d8;
+            padding: 9px 10px;
+            font: inherit;
+            outline: none
+        }
+
+        input[type=text]:focus {
+            border-color: #555
+        }
+
+        button,
+        .btn {
+            background: #1e1e1e;
+            border: 1px solid #2a2a2a;
+            color: #d8d8d8;
+            padding: 9px 14px;
+            font: inherit;
+            cursor: pointer
+        }
+
+        button:hover,
+        .btn:hover {
+            background: #262626
+        }
+
+        input[type=file] {
+            display: none
+        }
+
+        #msg {
+            color: #c9a227;
+            margin-top: 12px;
+            min-height: 20px
+        }
+
+        #chat {
+            margin-top: 12px;
+            border: 1px solid #222
+        }
+
+        #log {
+            height: 180px;
+            overflow-y: auto;
+            padding: 8px 10px;
+            color: #bbb;
+            word-break: break-word
+        }
+
+        #log b {
+            color: #888;
+            font-weight: 600
+        }
+
+        #cf {
+            display: flex;
+            border-top: 1px solid #222
+        }
+
+        #cf input {
+            flex: 1;
+            background: #161616;
+            border: 0;
+            color: #d8d8d8;
+            padding: 9px 10px;
+            font: inherit;
+            outline: none
+        }
+
+        #cf button {
+            border: 0;
+            border-left: 1px solid #222
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: #0d0d0d;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 14px;
+            z-index: 9
+        }
+
+        .overlay p {
+            color: #777
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="overlay" id="enter">
+        <p>Room {{ room }}</p>
+        <button onclick="enter()">Enter</button>
+    </div>
+
+    <div class="wrap">
+        <header>
+            <h1>Watch Party<span>{{ room }}</span></h1>
+            <div class="right"><span id="count"></span><button onclick="copyLink(this)">Copy link</button></div>
+        </header>
+
+        <div class="stage" id="stage">
+            <div class="empty" id="empty">Nothing loaded</div>
+            <div id="yt"></div>
+            <video id="v" controls playsinline></video>
+        </div>
+
+        <div class="bar">
+            <input type="text" id="url" placeholder="YouTube link">
+            <button onclick="loadYT()">Load</button>
+            <label class="btn" for="file">Local file</label>
+            <input type="file" id="file" accept="video/*">
+            <button onclick="sock.emit('resync')">Sync</button>
+        </div>
+        <div id="msg"></div>
+
+        <div id="chat">
+            <div id="log"></div>
+            <form id="cf"><input type="text" id="ci" placeholder="Message (/nick name to rename)" maxlength="300"
+                    autocomplete="off"><button>Send</button></form>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        const room = {{ room| tojson }}, sock = io();
+        const vid = document.getElementById('v'), stage = document.getElementById('stage'), msg = document.getElementById('msg');
+        const empty = document.getElementById('empty');
+        let kind = null, curId = null, need = null, yt = null, ytReady = false, pending = null, mute = 0, lastT = 0;
+        const quiet = () => { mute = Date.now() + 600 }, muted = () => Date.now() < mute;
+        /* server clock offset (for latency compensation) */
+        let off = 0, best = 1e9;
+        const srvNow = () => (Date.now() + off) / 1000;
+        function clockSample() {
+            const c0 = Date.now();
+            sock.emit('time', s => {
+                const c1 = Date.now(), rtt = c1 - c0;
+                if (rtt <= best + 20) { best = Math.min(best, rtt); off = s * 1000 + rtt / 2 - c1; }
+            });
+        }
+        sock.on('connect', () => { for (let i = 0; i < 6; i++)setTimeout(clockSample, i * 250); });
+        setInterval(clockSample, 20000);
+        const mb = n => (n / 1048576).toFixed(1) + ' MB';
+
+        /* ---------- player ---------- */
+        const ready = () => kind === 'yt' ? ytReady : (kind === 'local' && vid.readyState > 0);
+        const cur = () => kind === 'yt' ? yt.getCurrentTime() : vid.currentTime;
+        const playing = () => kind === 'yt' ? yt.getPlayerState() === 1 : !vid.paused;
+        function send() { if (!ready() || muted()) return; sock.emit('ctl', { playing: playing(), t: cur(), at: srvNow() }); }
+
+        function apply(p, t, at) {
+            if (!ready()) { pending = { p, t, at }; return; }
+            if (p && at) t += Math.max(0, Math.min(60, srvNow() - at));   // compensate latency
+            quiet();
+            if (Math.abs(cur() - t) > 0.4) { kind === 'yt' ? yt.seekTo(t, true) : vid.currentTime = t; }
+            if (kind === 'yt') { p ? yt.playVideo() : yt.pauseVideo(); }
+            else { p ? vid.play().catch(() => { }) : vid.pause(); }
+        }
+        function flush() { if (pending && ready()) { const x = pending; pending = null; apply(x.p, x.t, x.at); } }
+
+        function show(k) {
+            kind = k;
+            empty.style.display = k ? 'none' : 'flex';
+            const y = document.getElementById('yt');
+            if (y) y.style.display = k === 'yt' ? 'block' : 'none';
+            vid.style.display = k === 'local' ? 'block' : 'none';
+            if (k !== 'yt' && yt && ytReady) { try { yt.pauseVideo() } catch (e) { } }
+            if (k !== 'local') vid.pause();
+        }
+        function openYT(id) {
+            if (!window.YT || !YT.Player) { setTimeout(() => openYT(id), 300); return; }
+            need = null; curId = id; ytReady = false; msg.textContent = '';
+            if (yt) { try { yt.destroy() } catch (e) { } yt = null; }
+            if (!document.getElementById('yt')) { const d = document.createElement('div'); d.id = 'yt'; stage.insertBefore(d, vid); }
+            show('yt');
+            yt = new YT.Player('yt', {
+                videoId: id, width: '100%', height: '100%', playerVars: { playsinline: 1 }, events: {
+                    onReady: () => { ytReady = true; flush(); },
+                    onStateChange: e => { if (e.data === 1 || e.data === 2) send(); }
+                }
+            });
+        }
+        function openLocal(file) {
+            need = null; curId = file.name; msg.textContent = '';
+            vid.src = URL.createObjectURL(file); show('local');
+        }
+        function needFile(d) {
+            need = { name: d.id, size: d.size }; curId = d.id;
+            vid.removeAttribute('src'); show(null);
+            msg.textContent = 'Local file in use: ' + d.id + ' (' + mb(d.size) + '). Pick the same file.';
+        }
+
+        /* ---------- user actions ---------- */
+        function loadYT() {
+            const m = document.getElementById('url').value.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/);
+            if (!m) { msg.textContent = 'Invalid YouTube link'; return; }
+            pending = null; openYT(m[1]); sock.emit('load', { kind: 'yt', id: m[1] });
+        }
+        document.getElementById('file').onchange = e => {
+            const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+            if (need) {
+                if (f.size === need.size) { openLocal(f); return; }               // follower, matching file
+                if (!confirm('Different file (' + mb(f.size) + '). Load it for everyone?')) return;
+            }
+            pending = null; openLocal(f);
+            sock.emit('load', { kind: 'local', id: f.name, size: f.size });
+        };
+        vid.addEventListener('loadedmetadata', flush);
+        ['play', 'pause', 'seeked'].forEach(ev => vid.addEventListener(ev, send));
+
+        let lastW = performance.now();
+        setInterval(() => {  // detect YouTube seeks
+            const w = performance.now(), dt = (w - lastW) / 1000; lastW = w;
+            if (kind !== 'yt' || !ytReady) return;
+            const t = cur();
+            if (!muted() && Math.abs(t - lastT - (playing() ? dt : 0)) > 1) send();
+            lastT = t;
+        }, 250);
+
+        /* ---------- server events ---------- */
+        sock.on('load', d => {
+            pending = null;
+            d.kind === 'yt' ? openYT(d.id) : needFile(d);
+        });
+        sock.on('ctl', d => apply(d.playing, d.t, d.at));
+        sock.on('state', d => {
+            if (d.kind === kind && d.id === curId) { apply(d.playing, d.t, d.at); return; }
+            pending = { p: d.playing, t: d.t, at: d.at };
+            d.kind === 'yt' ? openYT(d.id) : needFile(d);
+        });
+        sock.on('count', n => { document.getElementById('count').textContent = n + ' watching'; });
+
+        /* ---------- chat ---------- */
+        let nick = null;
+        try { nick = localStorage.getItem('nick'); } catch (e) { }
+        nick = nick || ('user' + Math.floor(100 + Math.random() * 900));
+        const log = document.getElementById('log'), ci = document.getElementById('ci');
+        function addMsg(m) {
+            const d = document.createElement('div'), b = document.createElement('b');
+            if (m.name) b.textContent = m.name + ' ';
+            d.append(b, document.createTextNode(m.text));
+            log.append(d);
+            while (log.children.length > 100) log.firstChild.remove();
+            log.scrollTop = log.scrollHeight;
+        }
+        document.getElementById('cf').onsubmit = e => {
+            e.preventDefault();
+            const t = ci.value.trim(); ci.value = ''; if (!t) return;
+            const m = t.match(/^\/nick\s+(.+)/);
+            if (m) { nick = m[1].slice(0, 20); try { localStorage.setItem('nick', nick) } catch (e) { } addMsg({ name: '', text: 'You are now ' + nick }); return; }
+            sock.emit('chat', { name: nick, text: t });
+        };
+        sock.on('chat', addMsg);
+        sock.on('history', h => h.forEach(addMsg));
+
+        /* ---------- ui ---------- */
+        function enter() { document.getElementById('enter').remove(); sock.emit('join', { room }); }
+        function copyLink(b) { navigator.clipboard.writeText(location.href); b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy link', 1200); }
+    </script>
+</body>
+
+</html>
