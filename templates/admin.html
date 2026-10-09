@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Console</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        body {
+            background: #0d0d0d;
+            color: #d8d8d8;
+            font: 15px/1.4 system-ui, sans-serif
+        }
+
+        .wrap {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 16px
+        }
+
+        h1 {
+            font-size: 16px;
+            font-weight: 600;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #222;
+            margin-bottom: 16px
+        }
+
+        input {
+            background: #161616;
+            border: 1px solid #2a2a2a;
+            color: #d8d8d8;
+            padding: 9px 10px;
+            font: inherit;
+            outline: none
+        }
+
+        input:focus {
+            border-color: #555
+        }
+
+        button {
+            background: #1e1e1e;
+            border: 1px solid #2a2a2a;
+            color: #d8d8d8;
+            padding: 7px 12px;
+            font: inherit;
+            cursor: pointer
+        }
+
+        button:hover {
+            background: #262626
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 16px
+        }
+
+        .card {
+            border: 1px solid #222;
+            padding: 12px;
+            margin-bottom: 12px
+        }
+
+        .top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px
+        }
+
+        .top small {
+            color: #777;
+            margin-left: 8px
+        }
+
+        .m {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            color: #aaa
+        }
+
+        input[type=number] {
+            width: 80px
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <h1>Console</h1>
+        {% if not authed %}
+        <form method="post" action="/{{ path }}/login" class="row">
+            <input type="password" name="p" placeholder="Password" autofocus><button>Login</button>
+        </form>
+        {% else %}
+        <div class="row">Max viewers per room <input type="number" id="max" min="0" max="20"><button
+                onclick="save()">Save</button></div>
+        <div id="rooms"></div>
+        <script>
+            const base = {{ ('/' + path) | tojson }};
+            const box = document.getElementById('rooms'), mx = document.getElementById('max');
+            const el = (t, txt, cls) => { const e = document.createElement(t); if (txt) e.textContent = txt; if (cls) e.className = cls; return e };
+            const post = (u, b) => fetch(base + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(refresh);
+            const save = () => post('/set', { max: +mx.value });
+            async function refresh() {
+                const r = await fetch(base + '/data'); if (!r.ok) { location.reload(); return }
+                const d = await r.json();
+                if (document.activeElement !== mx) mx.value = d.max;
+                box.replaceChildren();
+                if (!d.rooms.length) box.textContent = 'No rooms';
+                d.rooms.forEach(x => {
+                    const c = el('div', '', 'card'), t = el('div', '', 'top'), l = el('div');
+                    l.append(el('b', x.room), el('small', x.kind ? x.kind + ': ' + x.id : 'idle'));
+                    const cb = el('button', 'Close room'); cb.onclick = () => post('/close', { room: x.room });
+                    t.append(l, cb); c.append(t);
+                    x.members.forEach((s, i) => {
+                        const m = el('div', '', 'm'); m.append(el('span', (i ? 'viewer ' : 'host ') + s.slice(0, 6)));
+                        const kb = el('button', 'Kick'); kb.onclick = () => post('/kick', { sid: s }); m.append(kb); c.append(m);
+                    });
+                    box.append(c);
+                });
+            }
+            refresh(); setInterval(refresh, 3000);
+        </script>
+        {% endif %}
+    </div>
+</body>
+
+</html>
