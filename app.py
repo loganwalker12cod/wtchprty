@@ -19,9 +19,17 @@ last = {}   # sid -> last chat time
 def home():
     return redirect(f"/r/{secrets.token_urlsafe(4)}")
 
+def ice_servers():
+    ice = [{"urls": "stun:stun.l.google.com:19302"}]
+    if os.environ.get("TURN_URL"):
+        ice.append({"urls": os.environ["TURN_URL"].split(","),
+                    "username": os.environ.get("TURN_USER", ""),
+                    "credential": os.environ.get("TURN_PASS", "")})
+    return ice
+
 @app.route("/r/<room>")
 def room_page(room):
-    return render_template("room.html", room=room)
+    return render_template("room.html", room=room, ice=ice_servers())
 
 
 # ---------- helpers ----------

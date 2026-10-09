@@ -212,7 +212,7 @@
 
     <div class="wrap">
         <header>
-            <h1>Watch Room<span>{{ room }}</span></h1>
+            <h1>Watch Party<span>{{ room }}</span></h1>
             <div class="right"><span id="info"></span><button onclick="copyLink(this)">Copy link</button></div>
         </header>
 
@@ -227,7 +227,7 @@
             <button onclick="loadYT()">Load</button>
             <label class="btn" for="file">Local file</label>
             <input type="file" id="file" accept="video/*">
-            <button onclick="sock.emit('resync')">Sync</button>
+            <button onclick="resync()">Sync</button>
         </div>
         <div class="bar" id="viewbar" style="display:none">
             <button class="lonly" id="pp">Pause</button>
@@ -235,7 +235,7 @@
             <span class="lonly" id="time">0:00</span>
             <button onclick="stage.requestFullscreen()">Fullscreen</button>
             <input type="range" id="vol" min="0" max="100" value="100">
-            <button onclick="sock.emit('resync')">Sync</button>
+            <button onclick="resync()">Sync</button>
         </div>
         <div id="msg"></div>
 
@@ -250,10 +250,10 @@
     <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const room = {{ room| tojson }}, sock = io();
-        const RTC = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const RTC = { iceServers: {{ ice| tojson }}};
         const $ = id => document.getElementById(id);
         const vid = $('v'), stage = $('stage'), msg = $('msg'), empty = $('empty'), info = $('info');
-        let role = null, viewers = [], kind = null, yt = null, ytReady = false, pending = null, mute = 0, lastT = 0, lastW = performance.now();
+        let role = null, hostId = null, viewers = [], kind = null, yt = null, ytReady = false, pending = null, mute = 0, lastT = 0, lastW = performance.now();
         let stream = null, lastPos = null, seeking = false; const peers = {}, iceQ = {};
         const quiet = () => { mute = Date.now() + 600 }, muted = () => Date.now() < mute;
         const fmt = s => { s = Math.max(0, s | 0); const h = s / 3600 | 0, m = (s % 3600) / 60 | 0; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
@@ -327,6 +327,13 @@
         }
 
         /* ---------- local file over webrtc ---------- */
+        function resync() {
+            sock.emit('resync');
+            if (role === 'viewer' && kind === 'local' && hostId) sock.emit('signal', { to: hostId, data: { retry: true } });
+        }
+        function nudge() {  // paused captured video sends no frames until something changes
+            if (vid.paused && vid.readyState > 0) { try { vid.currentTime = Math.min(vid.duration || 1e9, vid.currentTime + 0.05); } catch (e) { } }
+        }
         function closePeer(id) { if (peers[id]) { peers[id].close(); delete peers[id]; } delete iceQ[id]; }
         function closeAll() { Object.keys(peers).forEach(closePeer); }
         function startStream() {
@@ -344,6 +351,7 @@
             const pc = new RTCPeerConnection(RTC); peers[id] = pc;
             stream.getTracks().forEach(t => pc.addTrack(t, stream));
             pc.onicecandidate = e => e.candidate && sock.emit('signal', { to: id, data: { ice: e.candidate } });
+            pc.onconnectionstatechange = () => { if (pc.connectionState === 'connected') nudge(); };
             await pc.setLocalDescription(await pc.createOffer());
             sock.emit('signal', { to: id, data: { sdp: pc.localDescription } });
             pc.getSenders().forEach(s => {
@@ -359,11 +367,21 @@
             iceQ[id] = [];
         }
         sock.on('signal', async ({ from, data }) => {
+            if (data.retry) { if (role === 'host' && kind === 'local' && stream) { closePeer(from); syncPeers(); } return; }
             if (data.sdp) {
                 if (data.sdp.type === 'offer') {
                     closePeer(from);
                     const pc = new RTCPeerConnection(RTC); peers[from] = pc;
-                    pc.ontrack = e => { vid.srcObject = e.streams[0]; vid.play().catch(() => { }); msg.textContent = ''; };
+                    msg.textContent = 'Connecting to host...';
+                    pc.ontrack = e => {
+                        vid.srcObject = e.streams[0];
+                        vid.play().catch(() => { vid.muted = true; vid.play().catch(() => { }); msg.textContent = 'Browser blocked sound. Move the volume slider to unmute.'; });
+                    };
+                    pc.onconnectionstatechange = () => {
+                        const st = pc.connectionState;
+                        if (st === 'connected') { if (/^(Connecting|P2P)/.test(msg.textContent)) msg.textContent = ''; }
+                        else if (st === 'failed') msg.textContent = 'P2P connection failed. Press Sync to retry. If it keeps failing, the host needs a TURN server.';
+                    };
                     pc.onicecandidate = e => e.candidate && sock.emit('signal', { to: from, data: { ice: e.candidate } });
                     await pc.setRemoteDescription(data.sdp);
                     await pc.setLocalDescription(await pc.createAnswer());
@@ -401,12 +419,12 @@
         $('pp').onclick = () => sock.emit('req', { playing: lastPos ? !lastPos.p : true });
         $('seek').oninput = () => { seeking = true; $('time').textContent = fmt($('seek').value) + ' / ' + fmt($('seek').max); };
         $('seek').onchange = () => { seeking = false; sock.emit('req', { t: +$('seek').value }); };
-        $('vol').oninput = e => { const v = e.target.value / 100; vid.volume = v; if (yt && ytReady) yt.setVolume(v * 100); };
+        $('vol').oninput = e => { const v = e.target.value / 100; vid.muted = false; vid.volume = v; if (yt && ytReady) yt.setVolume(v * 100); };
 
         /* ---------- server events ---------- */
         sock.on('roster', d => {
             const was = role;
-            role = d.host === sock.id ? 'host' : 'viewer'; viewers = d.viewers;
+            role = d.host === sock.id ? 'host' : 'viewer'; viewers = d.viewers; hostId = d.host;
             if (was && was !== role) { closeAll(); stream = null; }
             info.textContent = role + ' / ' + viewers.length + ' of ' + d.max + ' viewers';
             updUI();
