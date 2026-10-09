@@ -16,6 +16,10 @@ def home():
 def room_page(room):
     return render_template("room.html", room=room)
 
+@app.route("/health")
+def hell():
+    return "Hello World"
+
 def snap(r):
     s = rooms[r]
     t = s["t"] + (time.time() - s["at"] if s["playing"] else 0)
